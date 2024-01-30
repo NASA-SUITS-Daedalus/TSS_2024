@@ -12,46 +12,63 @@
 //                                 Functions
 ///////////////////////////////////////////////////////////////////////////////////
 
-void get_ip_address(char* hostname_out){
-    
-    // initialize default hostname
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#endif
+
+void get_ip_address(char* hostname_out) {
+    // Initialize default hostname
     memset(hostname_out, 0, 16);
     strcpy(hostname_out, "127.0.0.1");
 
-    // Get all addresses
-    struct ifaddrs *addresses;
-    if (getifaddrs(&addresses) == -1) {
-        printf("getifaddrs call failed\n");
+#ifdef _WIN32
+    PIP_ADAPTER_ADDRESSES addresses = NULL;
+    ULONG outBufLen = 0;
+    DWORD dwRetVal = 0;
+
+    dwRetVal = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, addresses, &outBufLen);
+    if (dwRetVal == ERROR_BUFFER_OVERFLOW) {
+        addresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
+        if (addresses == NULL) {
+            fprintf(stderr, "Memory allocation failed\n");
+            return;
+        }
+    } else {
+        fprintf(stderr, "GetAdaptersAddresses failed with error %d\n", dwRetVal);
         return;
     }
 
-    // Loop through addresses and find a non local host IP4 address
-    struct ifaddrs *address = addresses;
-    while(address) {
-        // skip if the address is NULL
-        if (address->ifa_addr == NULL) { 
-            address = address->ifa_next;
-            continue;
-        }
-
-        // Check that it is IP4
-        int family = address->ifa_addr->sa_family;
-        if (family == AF_INET) {
-
-            char ap[100];
-            const int family_size = sizeof(struct sockaddr_in);
-            getnameinfo(address->ifa_addr, family_size, ap, sizeof(ap), 0, 0, NI_NUMERICHOST);
-
-            // Check that it isn't local host
-            if(strcmp(ap, "127.0.0.1") != 0){
-                memset(hostname_out, 0, 16);
-                strcpy(hostname_out, ap);
+    dwRetVal = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, addresses, &outBufLen);
+    if (dwRetVal == NO_ERROR) {
+        PIP_ADAPTER_ADDRESSES address = addresses;
+        while (address) {
+            if (address->FirstUnicastAddress != NULL) {
+                struct sockaddr* sa = address->FirstUnicastAddress->Address.lpSockaddr;
+                if (sa->sa_family == AF_INET) {
+                    struct sockaddr_in* sin = (struct sockaddr_in*)sa;
+                    const char* ip = inet_ntoa(sin->sin_addr);
+                    if (strcmp(ip, "127.0.0.1") != 0) {
+                        memset(hostname_out, 0, 16);
+                        strncpy(hostname_out, ip, 15);
+                        break;
+                    }
+                }
             }
-
+            address = address->Next;
         }
-        address = address->ifa_next;
+    } else {
+        fprintf(stderr, "GetAdaptersAddresses failed with error %d\n", dwRetVal);
     }
-    freeifaddrs(addresses);
+
+    free(addresses);
+#endif
 }
 
 const char* get_content_type(const char* path){
